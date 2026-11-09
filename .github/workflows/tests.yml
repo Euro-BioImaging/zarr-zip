@@ -1,0 +1,103 @@
+name: Tests
+
+# Tests run on a pull request (opened, every new commit, reopened) and before every
+# release (publish.yml calls this workflow; nothing is published unless it passes).
+# Plain pushes do not run them; "Run workflow" on the Actions tab runs them by hand.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Zip files and paths: Windows and macOS differ (separators, case, their own tar),
+        # so every OS runs every Python the package claims.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: bsdtar on Linux (the outside-reader test; Windows and macOS have their own)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libarchive-tools
+      - name: Run tests
+        run: python -m pytest tests -v
+
+  install-check:
+    # Builds the wheel, installs it into a clean venv outside the repo and runs the tests
+    # there: an editable install tests the source tree, so a module missing from the wheel
+    # would go unnoticed (dyna-zarr 0.0.4 shipped unimportable that way).
+    name: Wheel install-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Build, install into a clean venv, run the tests
+        shell: python
+        run: |
+          import glob, os, shutil, subprocess, sys, tempfile
+
+          def run(*cmd, **kw):
+              print("+", " ".join(map(str, cmd)), flush=True)
+              subprocess.run(cmd, check=True, **kw)
+
+          run(sys.executable, "-m", "pip", "install", "--upgrade", "pip", "build")
+          run(sys.executable, "-m", "build", "--wheel")
+          fresh = os.path.join(tempfile.mkdtemp(prefix="zz-"), "venv")
+          run(sys.executable, "-m", "venv", fresh)
+          bindir = "Scripts" if os.name == "nt" else "bin"
+          py = os.path.join(fresh, bindir, "python.exe" if os.name == "nt" else "python")
+          wheel = glob.glob(os.path.join("dist", "*.whl"))[0]
+          run(py, "-m", "pip", "install", "--upgrade", "pip")
+          run(py, "-m", "pip", "install", f"{wheel}[test]")
+
+          outside = tempfile.mkdtemp(prefix="zz-run-")
+          probe = ("import zarr_zip, zarr_zip.writer, zarr_zip.__main__, importlib.metadata as md;"
+                   "assert zarr_zip.__version__ == md.version('zarr-zip'), "
+                   "(zarr_zip.__version__, md.version('zarr-zip'));"
+                   "assert 'site-packages' in zarr_zip.__file__, zarr_zip.__file__;"
+                   "print('zarr_zip', zarr_zip.__version__, 'imports from the wheel')")
+          run(py, "-c", probe, cwd=outside)
+          cli = os.path.join(fresh, bindir, "zarr-zip.exe" if os.name == "nt" else "zarr-zip")
+          run(cli, "--version", cwd=outside)
+          dest = os.path.join(outside, "wheel_tests")
+          shutil.copytree(os.path.join(os.environ["GITHUB_WORKSPACE"], "tests"), dest)
+          run(py, "-m", "pytest", dest, "-v", cwd=outside)
+
+  metadata:
+    name: Package metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build and check the distribution
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
