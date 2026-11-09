@@ -17,27 +17,31 @@ Two layouts:
 In both, entries are stored uncompressed (Zarr chunks are compressed already) and the
 ``zarr.json`` / ``.zattrs`` files come first, shallowest first, so a reader finds the
 metadata without scanning the archive.
+
+:class:`ZipWriter` writes a store into a zip while the store is being written (whole chunks
+or shards as they finish), and reads finished entries back; :func:`open_writer` opens one in
+either layout, :func:`zip_store` uses it for a store already on disk, and
+:class:`zarr_zip.zarr_store.WriterStore` lets zarr-python read and write through it.
 """
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Optional
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
+from .writer import METADATA_FILES, ZipWriter, is_metadata
+
 __all__ = ["Store", "find_stores", "zip_name", "inner_folder", "bia_folder", "follows_bia_naming",
-           "zip_store", "verify_zip", "LAYOUTS"]
+           "zip_store", "verify_zip", "rfc9_comment", "open_writer", "layout_of", "ZipWriter",
+           "is_metadata", "LAYOUTS"]
 
 LAYOUTS = ("bia", "rfc9")
-#: files that hold Zarr / OME-Zarr metadata, written before the chunks
-METADATA_FILES = ("zarr.json", ".zgroup", ".zarray", ".zattrs", ".zmetadata")
 #: the BioImage Archive asks for zips below this size (it refuses above 2 TB)
 BIA_ADVISED_MAX = 100 * 1024 ** 3
-_COPY_BUFFER = 8 * 1024 * 1024
 
 
 @dataclass
@@ -182,30 +186,75 @@ def zip_store(store: Store, dest=None, layout: str = "bia", overwrite: bool = Fa
         raise FileExistsError(f"{target} exists (pass overwrite=True / --overwrite to replace it)")
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    files = store_files(store)
-    inner = inner_folder(store, layout, rename_folder)
-    prefix = inner + "/" if inner else ""
-    part = target.with_name(target.name + ".part")
+    writer = ZipWriter(target, root=inner_folder(store, layout, rename_folder),
+                       comment=rfc9_comment(store.ome_version) if layout == "rfc9" else b"",
+                       force_zip64=(layout == "rfc9"), overwrite=overwrite)
     try:
-        with zipfile.ZipFile(part, "w", compression=zipfile.ZIP_STORED, allowZip64=True,
-                             strict_timestamps=False) as zf:
-            for rel in files:
-                src = store.path / rel
-                info = zipfile.ZipInfo.from_file(src, prefix + rel, strict_timestamps=False)
-                info.compress_type = zipfile.ZIP_STORED
-                with open(src, "rb") as fin, zf.open(info, "w", force_zip64=(layout == "rfc9")) as fout:
-                    shutil.copyfileobj(fin, fout, _COPY_BUFFER)
-            if layout == "rfc9":
-                zf.comment = json.dumps({"ome": {
-                    "version": store.ome_version or "unknown",
-                    "zipFile": {"centralDirectory": {"jsonFirst": True}}}}).encode("utf-8")
-        if verify != "none":
-            verify_zip(part, store, layout, crc=(verify == "full"), rename_folder=rename_folder)
-        os.replace(part, target)
+        for rel in store_files(store):
+            writer.write_from(rel, store.path / rel)
     except BaseException:
-        part.unlink(missing_ok=True)
+        writer.abort()
         raise
-    return target
+
+    def check(part):
+        verify_zip(part, store, layout, crc=(verify == "full"), rename_folder=rename_folder)
+    return writer.close(verify="none", check=None if verify == "none" else check)
+
+
+def rfc9_comment(ome_version: Optional[str]) -> bytes:
+    """The zip comment NGFF RFC-9 asks for: the OME-Zarr version, and that the central
+    directory lists the JSON files first."""
+    return json.dumps({"ome": {"version": ome_version or "unknown",
+                               "zipFile": {"centralDirectory": {"jsonFirst": True}}}}).encode("utf-8")
+
+
+def layout_of(path) -> str:
+    """The layout a zip's name asks for: ``rfc9`` for ``X.ozx``, ``bia`` otherwise."""
+    return "rfc9" if str(path).lower().endswith(".ozx") else "bia"
+
+
+def _rfc9_comment_from_root(writer: "ZipWriter") -> bytes:
+    """RFC-9's comment, from the OME-Zarr version in the store's root ``zarr.json``."""
+    raw = writer.get("zarr.json")
+    if raw is None:
+        raise ValueError(f"{writer.path}: an RFC-9 zip (.ozx) holds a Zarr v3 store, whose "
+                         f"root has a zarr.json; none was written. Write Zarr v3 (OME-Zarr "
+                         f"0.5+), or name the zip X.ome.zarr.zip (layout 'bia').")
+    try:
+        ome = json.loads(raw).get("attributes", {}).get("ome")
+    except (ValueError, AttributeError):
+        ome = None
+    version = ome.get("version") if isinstance(ome, dict) else None
+    return rfc9_comment(str(version) if version is not None else None)
+
+
+def open_writer(path, *, layout: Optional[str] = None, root: Optional[str] = None,
+                overwrite: bool = False) -> ZipWriter:
+    """A :class:`ZipWriter` for a store written straight into the zip *path*.
+
+    ``layout`` (default: from the name, :func:`layout_of`):
+
+    ``bia``
+        The store's folder inside the zip, named as the zip without ``.zip``
+        (``X.ome.zarr.zip`` holds ``X.ome.zarr/``); *root* names it otherwise.
+    ``rfc9``
+        The store's root at the zip's root, ZIP64 entries, and the JSON comment naming the
+        OME-Zarr version, read from the root ``zarr.json`` when the zip is closed (closing
+        refuses a zip without one: RFC-9 holds Zarr v3 only).
+    """
+    path = Path(path)
+    layout = layout or layout_of(path)
+    if layout not in LAYOUTS:
+        raise ValueError(f"layout must be one of {LAYOUTS}, not {layout!r}")
+    if layout == "rfc9":
+        if root:
+            raise ValueError("an RFC-9 zip has the store's root at the zip's root: no root")
+        return ZipWriter(path, root="", comment=_rfc9_comment_from_root, force_zip64=True,
+                         overwrite=overwrite)
+    if root is None:
+        name = path.name
+        root = name[:-4] if name.lower().endswith(".zip") else name
+    return ZipWriter(path, root=root, overwrite=overwrite)
 
 
 def verify_zip(path, store: Store, layout: str = "bia", crc: bool = True,

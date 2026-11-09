@@ -14,7 +14,7 @@ It was called `ome-zarr-zip` up to 0.0.1.
 ## Install
 
 ```
-pip install git+https://github.com/Euro-BioImaging/zarr-zip
+pip install zarr-zip
 ```
 
 ## Use
@@ -56,6 +56,42 @@ from zarr_zip import find_stores, zip_store
 for store in find_stores(r"D:\results"):
     zip_store(store, r"E:\upload")
 ```
+
+## Writing a store straight into a zip
+
+A program that writes a Zarr store can write it into a zip directly, without a folder first.
+`ZipWriter` takes each finished chunk or shard as it comes, from any number of threads:
+
+```python
+from zarr_zip import open_writer
+
+with open_writer("img.ome.zarr.zip") as zw:     # holds the folder img.ome.zarr (BioImage Archive)
+    zw.write("0/c/0/0/0", shard_bytes)          # a whole chunk or shard, from memory
+    zw.write_from("0/c/0/0/1", "shard.tmp")     # or from a file
+    level0 = zw.read("0/c/0/0/0")               # finished entries can be read back
+    zw.write("zarr.json", metadata_bytes)       # written twice? the last copy counts
+```
+
+`open_writer("img.ozx")` writes the RFC-9 layout instead: the store at the top of the zip, and
+the comment naming the OME-Zarr version, taken from the root `zarr.json` when the zip is closed.
+
+zarr-python can read and write through the writer too (`pip install "zarr-zip[zarr]"`):
+
+```python
+import zarr
+from zarr_zip.zarr_store import WriterStore
+
+group = zarr.open_group(WriterStore(zw), mode="w-", zarr_format=3)
+level0 = zarr.open_array(WriterStore(zw, read_only=True), path="0")
+```
+
+- The zip is written as `img.ome.zarr.zip.part` and gets its name only when it is complete and
+  checked. If the program stops, no zip that looks finished is left behind.
+- Entries are stored uncompressed (Zarr chunks are compressed already), so reading one back
+  while the zip is still being written is a plain file read.
+- The zip's table of contents lists each file once (its last copy) and the metadata files
+  first, whatever order they were written in.
+- Nothing can be deleted from a zip being written; a chunk or shard is best written once.
 
 ## The two layouts
 
