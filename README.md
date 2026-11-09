@@ -1,7 +1,10 @@
-# ome-zarr-zip
+# zarr-zip
 
-This is a simple pure-python utility to batch-zip a collection of OME-Zarrs, making them ready to upload to the
-[BioImage Archive](https://www.ebi.ac.uk/bioimage-archive/help-zarr/).
+A small pure-Python library and command line for Zarr stores in zip files. It zips any Zarr store,
+OME-Zarr or plain, one zip per store: in the layout the
+[BioImage Archive](https://www.ebi.ac.uk/bioimage-archive/help-zarr/) asks for, or as an NGFF RFC-9 `.ozx`.
+
+It was called `ome-zarr-zip` up to 0.0.1.
 
 - Finds every OME-Zarr (or plain Zarr) under the input folder, subfolders included.
 - Writes one zip per store, named after the corresponding folder. Unzipping it gives back the original folder.
@@ -11,7 +14,7 @@ This is a simple pure-python utility to batch-zip a collection of OME-Zarrs, mak
 ## Install
 
 ```
-pip install git+https://github.com/Euro-BioImaging/ome-zarr-zip
+pip install git+https://github.com/Euro-BioImaging/zarr-zip
 ```
 
 ## Use
@@ -19,19 +22,19 @@ pip install git+https://github.com/Euro-BioImaging/ome-zarr-zip
 Zip everything under a folder, putting each zip next to its image:
 
 ```
-ome-zarr-zip D:\results
+zarr-zip D:\results
 ```
 
 Put the zips in another folder (the subfolders are kept):
 
 ```
-ome-zarr-zip D:\results -o E:\upload
+zarr-zip D:\results -o E:\upload
 ```
 
 See what it would do, without writing anything:
 
 ```
-ome-zarr-zip D:\results -o E:\upload --dry-run
+zarr-zip D:\results -o E:\upload --dry-run
 ```
 
 Other options:
@@ -48,7 +51,7 @@ Other options:
 From Python:
 
 ```python
-from ome_zarr_zip import find_stores, zip_store
+from zarr_zip import find_stores, zip_store
 
 for store in find_stores(r"D:\results"):
     zip_store(store, r"E:\upload")

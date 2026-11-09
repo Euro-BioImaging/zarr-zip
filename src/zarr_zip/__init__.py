@@ -1,6 +1,6 @@
-"""Zip OME-Zarr stores one by one, for upload (BioImage Archive) or as RFC-9 ``.ozx`` files.
+"""Zarr stores in zip files: zip stores one by one, for upload (BioImage Archive) or as RFC-9 ``.ozx`` files.
 
->>> from ome_zarr_zip import find_stores, zip_store
+>>> from zarr_zip import find_stores, zip_store
 >>> for store in find_stores("results"):
 ...     zip_store(store)
 

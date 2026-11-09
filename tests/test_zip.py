@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from ome_zarr_zip import (find_stores, follows_bia_naming, inner_folder, read_store, store_files,
+from zarr_zip import (find_stores, follows_bia_naming, inner_folder, read_store, store_files,
                           zip_name, zip_store)
-from ome_zarr_zip.__main__ import main
+from zarr_zip.__main__ import main
 
 
 def _write(path: Path, data):
@@ -47,7 +47,7 @@ def test_find_stores_does_not_enter_stores(tmp_path):
 
 
 def test_names():
-    from ome_zarr_zip import Store
+    from zarr_zip import Store
     ome, ome_named, plain = (Store(Path("x.zarr"), 3, "0.5"), Store(Path("x.ome.zarr"), 3, "0.5"),
                              Store(Path("x.zarr"), 3, None))
     assert zip_name(ome) == "x.zarr.zip"                            # the folder, as it is

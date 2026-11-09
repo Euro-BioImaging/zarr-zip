@@ -3,9 +3,9 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ome-zarr-zip"
+name = "zarr-zip"
 version = "0.0.1"
-description = "Zip OME-Zarr stores one by one: BioImage Archive .ome.zarr.zip or NGFF RFC-9 .ozx"
+description = "Zarr stores in zip files: one zip per store (BioImage Archive layout or NGFF RFC-9 .ozx)"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Bugra Özdemir", email = "bugraa.ozdemir@gmail.com" }]
@@ -19,7 +19,7 @@ dependencies = []
 test = ["pytest", "zarr>=3"]
 
 [project.scripts]
-ome-zarr-zip = "ome_zarr_zip.__main__:main"
+zarr-zip = "zarr_zip.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

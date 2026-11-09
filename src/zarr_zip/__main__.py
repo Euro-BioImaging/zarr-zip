@@ -1,4 +1,4 @@
-"""Command line: ``ome-zarr-zip INPUT [INPUT ...] [-o OUTPUT] [--layout bia|rfc9]``."""
+"""Command line: ``zarr-zip INPUT [INPUT ...] [-o OUTPUT] [--layout bia|rfc9]``."""
 from __future__ import annotations
 
 import argparse
@@ -13,10 +13,10 @@ from . import (BIA_ADVISED_MAX, LAYOUTS, __version__, _store_size, bia_folder, f
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="ome-zarr-zip",
-        description="Zip every OME-Zarr (or Zarr) store found under the inputs, one zip per store.")
+        prog="zarr-zip",
+        description="Zip every Zarr store (OME-Zarr or plain) found under the inputs, one zip per store.")
     p.add_argument("inputs", nargs="+", type=Path,
-                   help="OME-Zarr stores, or folders searched for them (subfolders included)")
+                   help="Zarr or OME-Zarr stores, or folders searched for them (subfolders included)")
     p.add_argument("-o", "--output", type=Path,
                    help="folder for the zips; the subfolders below each input are kept "
                         "(default: each zip next to its store)")
